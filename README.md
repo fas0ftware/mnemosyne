@@ -199,9 +199,9 @@ cargo test --locked
 
 ![Test results](docs/test-results.svg)
 
-- 25 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
+- 26 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
   decompression cap, KDF limits, header tampering, locks (stale, foreign), dedup and
-  content-defined boundaries (10 changed bytes in a 3 MB file → at most 2 new chunks),
+  content-defined boundaries (10 changed bytes in a 3 MB file → at most 2 new chunks), oversized repository files refused before reading,
   excludes and `CACHEDIR.TAG`, unreadable files, non-UTF-8 names, restore of contents,
   modes, times and links, partial restore, hostile snapshots, keep policies,
   forget/prune/check, a damaged and a missing chunk.

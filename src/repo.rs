@@ -346,10 +346,13 @@ impl Repo {
     /// Read, decrypt and verify a chunk: its plaintext must hash back to its id.
     pub fn get_chunk(&self, id: &str) -> Result<Vec<u8>> {
         Repo::check_id(id)?;
-        let blob = fs::read(self.chunk_path(id)).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => Error::Corrupt(format!("chunk {id} is missing")),
-            _ => Error::Io(e),
-        })?;
+        let blob =
+            read_capped(&self.chunk_path(id), MAX_CHUNK as u64 + 1024).map_err(|e| match e {
+                Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+                    Error::Corrupt(format!("chunk {id} is missing"))
+                }
+                other => other,
+            })?;
         let data = self
             .keys
             .open(Kind::Chunk, &self.id, id, &blob, MAX_CHUNK)?;
@@ -396,10 +399,13 @@ impl Repo {
     }
 
     pub fn load_snapshot(&self, name: &str) -> Result<Snapshot> {
-        let blob = fs::read(self.snapshot_path(name)?).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => Error::Usage(format!("no snapshot {name}")),
-            _ => Error::Io(e),
-        })?;
+        let blob =
+            read_capped(&self.snapshot_path(name)?, MAX_SNAPSHOT as u64).map_err(|e| match e {
+                Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+                    Error::Usage(format!("no snapshot {name}"))
+                }
+                other => other,
+            })?;
         let json = self
             .keys
             .open(Kind::Snapshot, &self.id, name, &blob, MAX_SNAPSHOT)?;
@@ -476,6 +482,29 @@ impl Repo {
         }
         Ok(n)
     }
+}
+
+/// Read a repository file, refusing one larger than `cap` before reading it: a planted
+/// multi-gigabyte "chunk" must not exhaust memory during a check or restore.
+fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let f = File::open(path)?;
+    let len = f.metadata()?.len();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if len > cap {
+        return Err(Error::Corrupt(format!(
+            "{name}: {len} bytes, more than any valid file"
+        )));
+    }
+    let mut buf = Vec::with_capacity(len as usize);
+    f.take(cap + 1).read_to_end(&mut buf)?;
+    if buf.len() as u64 > cap {
+        return Err(Error::Corrupt(format!("{name}: grew while being read")));
+    }
+    Ok(buf)
 }
 
 pub fn make_private_dir(path: &Path) -> Result<()> {
@@ -654,6 +683,25 @@ pub mod tests {
                 .is_none(),
             "tmp is clean"
         );
+    }
+
+    #[test]
+    fn oversized_files_are_refused_without_reading_them() {
+        let d = tempfile::tempdir().unwrap();
+        let r = new_repo(d.path());
+        let mut known = HashSet::new();
+        let id = r.keys().chunk_id(b"x");
+        r.put_chunk(&id, b"x", &mut known).unwrap();
+        // a sparse 64 GiB file: reading it would take the whole machine down
+        let f = OpenOptions::new()
+            .write(true)
+            .open(r.chunk_path(&id))
+            .unwrap();
+        f.set_len(64 << 30).unwrap();
+        match r.get_chunk(&id) {
+            Err(Error::Corrupt(msg)) => assert!(msg.contains("more than any valid file"), "{msg}"),
+            other => panic!("expected a refusal, got {:?}", other.map(|v| v.len())),
+        }
     }
 
     #[test]
