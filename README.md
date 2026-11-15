@@ -1,7 +1,7 @@
 # Mnemosyne
 
 [![CI](https://github.com/fas0ftware/mnemosyne/actions/workflows/ci.yml/badge.svg)](https://github.com/fas0ftware/mnemosyne/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Encrypted, deduplicating backups that **test their own restores**. One Rust binary,
@@ -84,6 +84,7 @@ mnemosyne init                       # asks for a new password (twice)
 mnemosyne backup ~/projects ~/Documents --exclude-file excludes.txt --exclude-caches
 mnemosyne snapshots                  # list
 mnemosyne ls latest ~/projects/app   # files of a snapshot (name, unique part, or latest)
+mnemosyne diff 20261115T1629 latest  # what changed: + added, - removed, M modified, T replaced
 mnemosyne restore latest --target /tmp/r --include ~/projects/app/README.md
 mnemosyne check --read-data          # decrypt and verify everything
 mnemosyne forget --keep-daily 7 --keep-weekly 8 --keep-monthly 12 --prune --dry-run
@@ -199,14 +200,14 @@ cargo test --locked
 
 ![Test results](docs/test-results.svg)
 
-- 26 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
+- 27 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
   decompression cap, KDF limits, header tampering, locks (stale, foreign), dedup and
   content-defined boundaries (10 changed bytes in a 3 MB file → at most 2 new chunks), oversized repository files refused before reading,
   excludes and `CACHEDIR.TAG`, unreadable files, non-UTF-8 names, restore of contents,
   modes, times and links, partial restore, hostile snapshots, keep policies,
   forget/prune/check, a damaged and a missing chunk.
 - 3 end-to-end tests run the real binary with the default Argon2id: full cycle with a
-  byte-for-byte comparison of the restored tree, wrong password and loose password-file
+  byte-for-byte comparison of the restored tree and `diff` after an edit, wrong password and loose password-file
   permissions, a damaged chunk caught by `check --read-data` and refused by `restore`.
 - CI also backs up its own checkout, restores it and compares it with `diff -r`.
 - By hand, on the author's laptop: 3857 files / 92.8 MB of real projects from an NTFS
@@ -229,7 +230,8 @@ Format version 1. Future versions will read it or say clearly that they cannot.
 
 - Packs: many small chunks in one file (fewer files on slow USB sticks and network shares).
 - A second key slot (recovery key printed on paper next to the password).
-- `diff` between two snapshots, `mount` with FUSE.
+- ~~`diff` between two snapshots~~ (done in 0.2: compared by chunk ids, nothing decrypted
+  but the two file lists); `mount` with FUSE.
 - Optional off-site copy (an rclone remote), still with all encryption on this side.
 
 ## License
