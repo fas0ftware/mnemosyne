@@ -1,0 +1,9 @@
+[Unit]
+Description=Mnemosyne backup
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/mnemosyne-scheduled backup
+Environment=MNEMOSYNE_BIN=%h/.local/bin/mnemosyne
+Nice=15
+IOSchedulingClass=idle

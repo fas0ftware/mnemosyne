@@ -1,0 +1,36 @@
+#!/bin/sh
+# Run by the systemd timers in contrib/systemd.
+#   mnemosyne-scheduled backup     back up MNEMOSYNE_PATHS into every repository
+#   mnemosyne-scheduled maintain   forget old snapshots, prune, verify a random 10%
+# Settings: ~/.config/mnemosyne/run.env (see contrib/run.env.example).
+# Every repository is tried even if an earlier one fails; the exit code says whether all
+# succeeded, and each outcome lands in the status file that Olympos reads.
+set -u
+conf="${MNEMOSYNE_RUN_ENV:-$HOME/.config/mnemosyne/run.env}"
+[ -r "$conf" ] || { echo "missing $conf" >&2; exit 2; }
+. "$conf"
+: "${MNEMOSYNE_REPOS:?set MNEMOSYNE_REPOS in $conf}"
+: "${MNEMOSYNE_PASSWORD_FILE:?set MNEMOSYNE_PASSWORD_FILE in $conf}"
+export MNEMOSYNE_PASSWORD_FILE
+bin="${MNEMOSYNE_BIN:-mnemosyne}"
+failed=0
+for repo in $MNEMOSYNE_REPOS; do
+    case "${1:-backup}" in
+    backup)
+        : "${MNEMOSYNE_PATHS:?set MNEMOSYNE_PATHS in $conf}"
+        # shellcheck disable=SC2086  # word splitting of the path list is intended
+        "$bin" --repo "$repo" backup $MNEMOSYNE_PATHS --exclude-caches \
+            ${MNEMOSYNE_EXCLUDE_FILE:+--exclude-file "$MNEMOSYNE_EXCLUDE_FILE"} || failed=1
+        ;;
+    maintain)
+        # shellcheck disable=SC2086
+        "$bin" --repo "$repo" forget ${MNEMOSYNE_KEEP:---keep-last 24 --keep-daily 7 --keep-weekly 8 --keep-monthly 12} --prune || failed=1
+        "$bin" --repo "$repo" check --read-data-subset "${MNEMOSYNE_CHECK_PERCENT:-10}" || failed=1
+        ;;
+    *)
+        echo "usage: mnemosyne-scheduled backup|maintain" >&2
+        exit 2
+        ;;
+    esac
+done
+exit $failed

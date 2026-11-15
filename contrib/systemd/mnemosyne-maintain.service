@@ -1,0 +1,10 @@
+[Unit]
+Description=Mnemosyne maintenance (forget, prune, verify a sample)
+After=mnemosyne-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/mnemosyne-scheduled maintain
+Environment=MNEMOSYNE_BIN=%h/.local/bin/mnemosyne
+Nice=15
+IOSchedulingClass=idle

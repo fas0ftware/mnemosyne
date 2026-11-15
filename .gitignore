@@ -1,0 +1,9 @@
+/target
+*.swp
+# Machine-specific settings and secrets never belong here
+password
+*.password
+run.env
+excludes
+status.json
+/.out

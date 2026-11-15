@@ -1,0 +1,38 @@
+[package]
+name = "mnemosyne"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Encrypted, deduplicating backups that test their own restores"
+license = "MIT"
+repository = "https://github.com/fas0ftware/mnemosyne"
+
+[dependencies]
+argon2 = "0.6.0"
+base64 = "0.23.1"
+blake3 = "1"
+chacha20poly1305 = "0.11.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+fastcdc = "3"
+getrandom = "0.4.3"
+globset = "0.4"
+libc = "0.2"
+rpassword = "7.5.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+zeroize = { version = "1.9.1", features = ["derive"] }
+zstd = "0.13"
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+# Argon2 and the ciphers are painfully slow unoptimised; tests open real repositories.
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,11 @@
+# Things that can be rebuilt or downloaded again
+.venv
+venv
+node_modules
+target
+__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.pyc
+.cache

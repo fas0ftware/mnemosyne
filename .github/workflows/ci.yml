@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint (warnings are errors)
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --locked
+      - name: Release build
+        run: cargo build --release --locked
+      - name: Restore drill on a real tree
+        run: |
+          set -e
+          bin=target/release/mnemosyne
+          export MNEMOSYNE_REPO="$RUNNER_TEMP/repo" MNEMOSYNE_PASSWORD_FILE="$RUNNER_TEMP/pw" MNEMOSYNE_STATUS="$RUNNER_TEMP/status.json"
+          printf 'ci password 1234567' > "$MNEMOSYNE_PASSWORD_FILE" && chmod 600 "$MNEMOSYNE_PASSWORD_FILE"
+          $bin init
+          $bin backup "$PWD" --exclude target --exclude .git
+          $bin backup "$PWD" --exclude target --exclude .git
+          $bin check --read-data
+          $bin restore latest --target "$RUNNER_TEMP/out"
+          diff -r --exclude target --exclude .git "$PWD" "$RUNNER_TEMP/out$PWD"
+          $bin forget --keep-last 1 --prune
+          $bin check --read-data
+          $bin status --json
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - name: Dependency audit (RustSec advisories)
+        run: cargo audit
