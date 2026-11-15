@@ -1,7 +1,7 @@
 # Mnemosyne
 
 [![CI](https://github.com/fas0ftware/mnemosyne/actions/workflows/ci.yml/badge.svg)](https://github.com/fas0ftware/mnemosyne/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Encrypted, deduplicating backups that **test their own restores**. One Rust binary,
@@ -22,6 +22,8 @@ $ mnemosyne check --read-data
 no problems found
 ```
 
+![Mnemosyne app](docs/app.png)
+
 > Status: young and not independently audited. The cryptography comes from audited
 > crates and nothing is home-made. **There is no recovery without the password**:
 > write it down somewhere that is not on the computer being backed up.
@@ -32,6 +34,7 @@ no problems found
 - [How it works](#how-it-works)
 - [Install](#install)
 - [Usage](#usage)
+- [The app](#the-app)
 - [Running it on a timer](#running-it-on-a-timer)
 - [Status file](#status-file)
 - [Security](#security)
@@ -109,6 +112,40 @@ are restored; ownership is not (Mnemosyne runs as a normal user).
 | 3 | wrong password |
 | 4 | repository locked by another run |
 | 5 | damaged data found |
+
+## The app
+
+`mnemosyne app` opens the backups in a window (a browser app window on 127.0.0.1);
+`mnemosyne install-app` puts it in the application menu.
+
+- **Repositories** with their last good backup and last verification, before anything
+  is unlocked (from the status file).
+- **Open** one with its password, or with one click from the password file the timers
+  use (only when that file is private, mode 600).
+- **Snapshots**: a chart of what each backup added and how the protected size grew, and
+  how much space the deduplication saves against keeping every snapshot as a full copy.
+- **Browse and search** any snapshot, and **download** a single file straight from it.
+- **What changed** between any two snapshots.
+- **Verify**: decrypt and check 10 % or every chunk, recorded in the status file.
+
+It is read-only: it never deletes, prunes or writes into a repository. The same
+safeguards as the author's password manager: 127.0.0.1 only with a Host check; every API
+call carries a random per-run token in a custom header (sent in the URL fragment, which
+never reaches a server), so other web pages cannot call it; a strict
+Content-Security-Policy; locked at start, locked again after 10 idle minutes, and the
+server stops when the window closes; after 5 wrong passwords unlocking pauses for 30 s.
+Files are looked up in the snapshot's own list, so no request can make it open a path on
+disk. An end-to-end test drives the real binary over HTTP: guards, the pause, browsing,
+search, a byte-for-byte download, diff, verification and locking again.
+
+<details>
+<summary>Locked, light theme and phone</summary>
+
+![Locked](docs/app-locked.png)
+![Light theme](docs/app-light.png)
+![Phone](docs/app-mobile.png)
+
+</details>
 
 ## Running it on a timer
 
@@ -200,13 +237,13 @@ cargo test --locked
 
 ![Test results](docs/test-results.svg)
 
-- 27 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
+- 31 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
   decompression cap, KDF limits, header tampering, locks (stale, foreign), dedup and
   content-defined boundaries (10 changed bytes in a 3 MB file → at most 2 new chunks), oversized repository files refused before reading,
   excludes and `CACHEDIR.TAG`, unreadable files, non-UTF-8 names, restore of contents,
   modes, times and links, partial restore, hostile snapshots, keep policies,
   forget/prune/check, a damaged and a missing chunk.
-- 3 end-to-end tests run the real binary with the default Argon2id: full cycle with a
+- 1 end-to-end test of the app (above), and 3 that run the real binary with the default Argon2id: full cycle with a
   byte-for-byte comparison of the restored tree and `diff` after an edit, wrong password and loose password-file
   permissions, a damaged chunk caught by `check --read-data` and refused by `restore`.
 - CI also backs up its own checkout, restores it and compares it with `diff -r`.

@@ -7,8 +7,8 @@
 <text x="14" y="56" fill="#58a6ff">$ cargo fmt --all --check &amp;&amp; cargo clippy --all-targets --locked -- -D warnings</text>
 <text x="14" y="74" fill="#e6edf3">clippy: 0 warnings</text>
 <text x="14" y="92" fill="#58a6ff">$ cargo test --locked</text>
-<text x="14" y="110" fill="#e6edf3">running 27 tests (crypto, repository, backup, restore, check/forget/prune, status)</text>
-<text x="14" y="128" fill="#3fb950">test result: ok. 27 passed; 0 failed</text>
+<text x="14" y="110" fill="#e6edf3">running 31 tests (crypto, repository, backup, restore, check/forget/prune, status)</text>
+<text x="14" y="128" fill="#3fb950">test result: ok. 31 passed; 0 failed</text>
 <text x="14" y="146" fill="#e6edf3">running 3 tests (tests/cli.rs: the real binary, default Argon2id)</text>
 <text x="14" y="164" fill="#3fb950">test result: ok. 3 passed; 0 failed</text>
 <text x="14" y="182" fill="#e6edf3"></text>

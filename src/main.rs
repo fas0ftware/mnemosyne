@@ -132,6 +132,17 @@ enum Command {
     Unlock,
     /// Repository size and snapshot count
     Stats,
+    /// Open the backups in a window: browse, compare, verify, download a file (local only)
+    App {
+        /// Port on 127.0.0.1 (0 = any free port)
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Do not open a window; print the link instead
+        #[arg(long)]
+        no_window: bool,
+    },
+    /// Put Mnemosyne into the application menu
+    InstallApp,
     /// Show the last backup and check of every repository (no password needed)
     Status {
         #[arg(long)]
@@ -618,6 +629,22 @@ fn run(cli: Cli) -> Result<()> {
             println!("snapshots   {}", names.len());
             println!("chunks      {}", repo.chunk_ids()?.len());
             println!("size        {}", human_bytes(repo.disk_usage()));
+        }
+        Command::App { port, no_window } => {
+            // The saved password file (as used by the timers) can unlock it with one click.
+            let file = cli.password_file.clone().or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|h| PathBuf::from(h).join(".config/mnemosyne/password"))
+            });
+            mnemosyne::app::run(mnemosyne::app::Options {
+                port: *port,
+                open_window: !*no_window,
+                password_file: file,
+            })
+            .map_err(Error::Usage)?;
+        }
+        Command::InstallApp => {
+            mnemosyne::desktop::install_app().map_err(Error::Usage)?;
         }
         Command::Status { json } => {
             let st = status::load();

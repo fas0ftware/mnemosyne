@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mnemosyne</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="/icon.svg" alt="" width="28" height="28">
+      <span class="brand__name">Mnemosyne</span>
+      <span class="brand__tag">encrypted backups</span>
+      <span id="lockstate" class="badge">locked</span>
+    </div>
+    <div class="actions">
+      <span id="repo-name" class="muted mono"></span>
+      <button id="lock" class="btn btn--small" type="button" hidden>Lock</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <!-- locked: repositories and unlock -->
+    <section id="locked">
+      <h2 class="section-title">Repositories</h2>
+      <p class="lead">Everything in a repository is encrypted. Open one with its password to see every backup, browse and search the files in any of them, download a single file, compare two backups, or check that the data still decrypts.</p>
+      <div id="repos" class="repos"></div>
+      <dialog id="unlock-dialog">
+        <form id="unlock-form" method="dialog">
+          <h3>Unlock <span id="unlock-repo" class="mono"></span></h3>
+          <label class="field">Password
+            <input id="unlock-password" type="password" autocomplete="current-password" required>
+          </label>
+          <p id="unlock-msg" class="note" role="status"></p>
+          <div class="actions">
+            <button class="btn btn--primary" type="submit" value="password">Unlock</button>
+            <button id="unlock-file" class="btn" type="button" hidden>Use the saved password</button>
+            <button class="btn btn--ghost" type="button" id="unlock-cancel">Cancel</button>
+          </div>
+        </form>
+      </dialog>
+    </section>
+
+    <!-- unlocked -->
+    <section id="open" hidden>
+      <section class="stats" id="stats" aria-label="Summary"></section>
+
+      <section class="panel">
+        <div class="panel__head">
+          <h2 class="panel__title">Snapshots</h2>
+          <span class="note" id="legend">bars: data added by each backup · line: size of the backed-up files</span>
+        </div>
+        <div id="chart" class="chart" role="img" aria-label="Size and added data per snapshot"></div>
+        <div class="scroll">
+          <table class="table">
+            <thead><tr><th>Time</th><th class="num">Files</th><th class="num">Size</th><th class="num">Added</th><th class="num">Took</th><th></th></tr></thead>
+            <tbody id="snapshots"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel__head">
+          <h2 class="panel__title">Browse</h2>
+          <div class="row filters">
+            <select id="browse-snap" aria-label="Snapshot"></select>
+            <input id="search" type="search" placeholder="find a file by name" aria-label="Search">
+          </div>
+        </div>
+        <nav id="crumbs" class="crumbs" aria-label="Path"></nav>
+        <div class="scroll tall">
+          <table class="table">
+            <thead><tr><th>Name</th><th class="num">Size</th><th>Modified</th><th></th></tr></thead>
+            <tbody id="files"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="panel__head">
+            <h2 class="panel__title">What changed</h2>
+            <div class="row filters">
+              <select id="diff-a" aria-label="Older snapshot"></select>
+              <select id="diff-b" aria-label="Newer snapshot"></select>
+            </div>
+          </div>
+          <p id="diff-summary" class="note"></p>
+          <ul id="diff" class="changes"></ul>
+        </div>
+        <div class="panel">
+          <h2 class="panel__title">Verify</h2>
+          <p class="note">Decrypts stored chunks and checks each against its id: a restore drill that writes nothing.</p>
+          <div class="actions">
+            <button class="btn" type="button" data-pct="10">Check 10 %</button>
+            <button class="btn" type="button" data-pct="100">Check everything</button>
+          </div>
+          <p id="verify-result" class="verify" role="status"></p>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

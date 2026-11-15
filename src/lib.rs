@@ -9,8 +9,10 @@
 //! - No network code at all: a repository is a directory (another disk, a USB stick,
 //!   a mounted share).
 
+pub mod app;
 pub mod backup;
 pub mod crypto;
+pub mod desktop;
 pub mod diff;
 pub mod maintain;
 pub mod repo;
