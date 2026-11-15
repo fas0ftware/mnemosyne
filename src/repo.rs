@@ -64,6 +64,61 @@ struct Config {
     kdf: Kdf,
     key_nonce: String,
     key: String,
+    /// Optional second key slot, unlocked by a recovery code printed on paper.
+    /// Older versions ignore the field, so adding it keeps the repository readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<Slot>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Slot {
+    kdf: Kdf,
+    key_nonce: String,
+    key: String,
+}
+
+/// Crockford base32: no I, L, O or U, so a code copied from paper is hard to misread.
+const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const CODE_BYTES: usize = 20; // 160 bits, 32 characters
+
+/// "abcd-efgh..." typed back in any case, with or without dashes and spaces, O for 0 and
+/// I or L for 1: the canonical 32 characters, or None when it cannot be a recovery code.
+pub fn normalize_recovery_code(code: &str) -> Option<String> {
+    let out: String = code
+        .chars()
+        .filter(|c| !matches!(c, '-' | ' ' | '\t'))
+        .map(|c| match c.to_ascii_uppercase() {
+            'O' => '0',
+            'I' | 'L' => '1',
+            other => other,
+        })
+        .collect();
+    (out.len() == 32 && out.bytes().all(|b| CODE_ALPHABET.contains(&b))).then_some(out)
+}
+
+fn new_recovery_code() -> Result<String> {
+    let bytes: [u8; CODE_BYTES] = crypto::random()?;
+    let mut bits = 0u32;
+    let mut n = 0;
+    let mut out = String::new();
+    for b in bytes {
+        bits = (bits << 8) | u32::from(b);
+        n += 8;
+        while n >= 5 {
+            n -= 5;
+            out.push(CODE_ALPHABET[((bits >> n) & 31) as usize] as char);
+        }
+    }
+    Ok(out)
+}
+
+/// "ABCD-EFGH-..." for printing.
+pub fn format_recovery_code(code: &str) -> String {
+    code.as_bytes()
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 impl Config {
@@ -87,6 +142,26 @@ impl Config {
         .into_iter()
         .chain(self.kdf.salt.bytes())
         .collect()
+    }
+
+    /// The recovery slot's associated data: the fixed header and its own KDF settings, but not
+    /// the password slot's salt, so changing the password keeps the recovery code valid.
+    fn recovery_aad(&self, kdf: &Kdf) -> Vec<u8> {
+        format!(
+            "mnemosyne-recovery|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            self.format,
+            self.id,
+            self.created,
+            self.chunker.min,
+            self.chunker.avg,
+            self.chunker.max,
+            kdf.algorithm,
+            kdf.m_cost,
+            kdf.t_cost,
+            kdf.p_cost,
+            kdf.salt
+        )
+        .into_bytes()
     }
 
     fn cost(&self) -> KdfCost {
@@ -156,6 +231,7 @@ impl Repo {
             },
             key_nonce: String::new(),
             key: String::new(),
+            recovery: None,
         };
         let repo = Repo {
             root: root.to_path_buf(),
@@ -181,6 +257,124 @@ impl Repo {
     }
 
     pub fn open(root: &Path, password: &str) -> Result<Repo> {
+        let config = Repo::read_config(root)?;
+        let salt = B64
+            .decode(&config.kdf.salt)
+            .map_err(|_| Error::Corrupt("bad salt".into()))?;
+        if !(16..=64).contains(&salt.len()) {
+            return Err(Error::Corrupt("bad salt length".into()));
+        }
+        let nonce = B64
+            .decode(&config.key_nonce)
+            .map_err(|_| Error::Corrupt("bad key nonce".into()))?;
+        let sealed = B64
+            .decode(&config.key)
+            .map_err(|_| Error::Corrupt("bad wrapped key".into()))?;
+        let mut wrapping: [u8; KEY_LEN] = crypto::derive(password, &salt, config.cost())?;
+        let keys = crypto::unwrap(&wrapping, &nonce, &sealed, &config.aad());
+        wrapping.zeroize();
+        Ok(Repo {
+            root: root.to_path_buf(),
+            id: config.id,
+            chunker: config.chunker,
+            keys: keys?,
+        })
+    }
+
+    /// Open with the recovery code instead of the password (to set a new password).
+    pub fn open_with_recovery(root: &Path, code: &str) -> Result<Repo> {
+        let code = normalize_recovery_code(code).ok_or_else(|| {
+            Error::Usage("that is not a recovery code (32 letters and digits)".into())
+        })?;
+        let config = Repo::read_config(root)?;
+        let slot = config
+            .recovery
+            .as_ref()
+            .ok_or_else(|| Error::Usage("this repository has no recovery key".into()))?;
+        let cost = KdfCost {
+            m: slot.kdf.m_cost,
+            t: slot.kdf.t_cost,
+            p: slot.kdf.p_cost,
+        };
+        if slot.kdf.algorithm != "argon2id" {
+            return Err(Error::Corrupt(
+                "unknown key derivation in the recovery slot".into(),
+            ));
+        }
+        let salt = B64
+            .decode(&slot.kdf.salt)
+            .map_err(|_| Error::Corrupt("bad recovery salt".into()))?;
+        if !(16..=64).contains(&salt.len()) {
+            return Err(Error::Corrupt("bad recovery salt length".into()));
+        }
+        let nonce = B64
+            .decode(&slot.key_nonce)
+            .map_err(|_| Error::Corrupt("bad recovery nonce".into()))?;
+        let sealed = B64
+            .decode(&slot.key)
+            .map_err(|_| Error::Corrupt("bad recovery key".into()))?;
+        let mut wrapping: [u8; KEY_LEN] = crypto::derive(&code, &salt, cost)?;
+        let keys = crypto::unwrap(&wrapping, &nonce, &sealed, &config.recovery_aad(&slot.kdf));
+        wrapping.zeroize();
+        Ok(Repo {
+            root: root.to_path_buf(),
+            id: config.id,
+            chunker: config.chunker,
+            keys: keys?,
+        })
+    }
+
+    pub fn has_recovery(&self) -> bool {
+        Repo::read_config(&self.root)
+            .map(|c| c.recovery.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Create (or replace) the recovery slot. Returns the code, formatted for printing.
+    /// It exists only here and on the owner's paper: it is never stored.
+    pub fn create_recovery_code(&self) -> Result<String> {
+        let mut config = Repo::read_config(&self.root)?;
+        let code = new_recovery_code()?;
+        let salt: [u8; SALT_LEN] = crypto::random()?;
+        let main = config.cost();
+        let kdf = Kdf {
+            algorithm: "argon2id".into(),
+            m_cost: main.m,
+            t_cost: main.t,
+            p_cost: main.p,
+            salt: B64.encode(salt),
+        };
+        let mut wrapping = crypto::derive(
+            &code,
+            &salt,
+            KdfCost {
+                m: kdf.m_cost,
+                t: kdf.t_cost,
+                p: kdf.p_cost,
+            },
+        )?;
+        let wrapped = crypto::wrap(&wrapping, &self.keys, &config.recovery_aad(&kdf));
+        wrapping.zeroize();
+        let (nonce, sealed) = wrapped?;
+        config.recovery = Some(Slot {
+            kdf,
+            key_nonce: B64.encode(nonce),
+            key: B64.encode(sealed),
+        });
+        let text = serde_json::to_vec_pretty(&config).map_err(|e| Error::Corrupt(e.to_string()))?;
+        self.write_atomic(&self.root.join("config.json"), &text)?;
+        Ok(format_recovery_code(&code))
+    }
+
+    pub fn remove_recovery(&self) -> Result<bool> {
+        let mut config = Repo::read_config(&self.root)?;
+        let had = config.recovery.take().is_some();
+        let text = serde_json::to_vec_pretty(&config).map_err(|e| Error::Corrupt(e.to_string()))?;
+        self.write_atomic(&self.root.join("config.json"), &text)?;
+        Ok(had)
+    }
+
+    fn read_config(root: &Path) -> Result<Config> {
         let path = root.join("config.json");
         let text = fs::read(&path).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => {
@@ -212,27 +406,7 @@ impl Repo {
         if !(64 << 10..=c.avg).contains(&c.min) || c.avg > c.max || c.max > (MAX_CHUNK as u32) / 2 {
             return Err(Error::Corrupt("bad chunker settings".into()));
         }
-        let salt = B64
-            .decode(&config.kdf.salt)
-            .map_err(|_| Error::Corrupt("bad salt".into()))?;
-        if !(16..=64).contains(&salt.len()) {
-            return Err(Error::Corrupt("bad salt length".into()));
-        }
-        let nonce = B64
-            .decode(&config.key_nonce)
-            .map_err(|_| Error::Corrupt("bad key nonce".into()))?;
-        let sealed = B64
-            .decode(&config.key)
-            .map_err(|_| Error::Corrupt("bad wrapped key".into()))?;
-        let mut wrapping: [u8; KEY_LEN] = crypto::derive(password, &salt, config.cost())?;
-        let keys = crypto::unwrap(&wrapping, &nonce, &sealed, &config.aad());
-        wrapping.zeroize();
-        Ok(Repo {
-            root: root.to_path_buf(),
-            id: config.id,
-            chunker: config.chunker,
-            keys: keys?,
-        })
+        Ok(config)
     }
 
     /// Re-wrap the master key with a new password. Data and snapshots stay as they are.
@@ -633,6 +807,99 @@ pub mod tests {
             "no second init"
         );
         assert!(Repo::init_with(&d.path().join("x"), "short", FAST, SMALL).is_err());
+    }
+
+    #[test]
+    fn recovery_code_opens_and_survives_a_password_change() {
+        let d = tempfile::tempdir().unwrap();
+        let r = new_repo(d.path());
+        let root = d.path().join("repo");
+        assert!(!r.has_recovery());
+        assert!(matches!(
+            Repo::open_with_recovery(&root, "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA"),
+            Err(Error::Usage(_))
+        ));
+        let code = r.create_recovery_code().unwrap();
+        assert!(r.has_recovery());
+        assert_eq!(code.len(), 39, "8 groups of 4 with dashes: {code}");
+        // typed back carelessly: lower case, spaces, O for 0, I for 1
+        let sloppy = code
+            .to_lowercase()
+            .replace('-', " ")
+            .replace('0', "o")
+            .replace('1', "i");
+        assert_eq!(
+            Repo::open_with_recovery(&root, &sloppy)
+                .unwrap()
+                .keys()
+                .to_bytes(),
+            r.keys().to_bytes()
+        );
+        // a different code of the right shape fails like a wrong password
+        let mut other = code.clone();
+        let last = if other.ends_with('A') { 'B' } else { 'A' };
+        other.pop();
+        other.push(last);
+        assert!(matches!(
+            Repo::open_with_recovery(&root, &other),
+            Err(Error::WrongPassword)
+        ));
+        assert!(matches!(
+            Repo::open_with_recovery(&root, "not a code"),
+            Err(Error::Usage(_))
+        ));
+        // the password slot keeps working, and changing the password keeps the code valid
+        r.change_password("a new password 456").unwrap();
+        assert!(Repo::open(&root, "a new password 456").is_ok());
+        let via_code = Repo::open_with_recovery(&root, &code).unwrap();
+        via_code.change_password("set from the code 789").unwrap();
+        assert!(Repo::open(&root, "set from the code 789").is_ok());
+        // a new code replaces the old one
+        let second = r.create_recovery_code().unwrap();
+        assert!(
+            Repo::open_with_recovery(&root, &code).is_err()
+                && Repo::open_with_recovery(&root, &second).is_ok()
+        );
+        assert!(r.remove_recovery().unwrap() && !r.has_recovery());
+    }
+
+    #[test]
+    fn tampered_recovery_slot_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let r = new_repo(d.path());
+        let code = r.create_recovery_code().unwrap();
+        let path = d.path().join("repo/config.json");
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v["recovery"]["kdf"]["t_cost"] = serde_json::json!(2);
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        assert!(Repo::open_with_recovery(&d.path().join("repo"), &code).is_err());
+        v["recovery"]["kdf"]["m_cost"] = serde_json::json!(4_000_000);
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        assert!(
+            Repo::open_with_recovery(&d.path().join("repo"), &code).is_err(),
+            "KDF limits apply here too"
+        );
+        assert!(
+            Repo::open(&d.path().join("repo"), "test password 123").is_ok(),
+            "the password slot is untouched"
+        );
+    }
+
+    #[test]
+    fn codes_are_random_and_well_formed() {
+        let a = new_recovery_code().unwrap();
+        let b = new_recovery_code().unwrap();
+        assert_ne!(a, b);
+        assert!(normalize_recovery_code(&a).is_some() && a.len() == 32);
+        assert_eq!(
+            normalize_recovery_code("0123-4567-89ab-cdef-ghjk-mnpq-rstv-wxyz").as_deref(),
+            Some("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+        );
+        assert!(
+            normalize_recovery_code("UUUU-UUUU-UUUU-UUUU-UUUU-UUUU-UUUU-UUUU").is_none(),
+            "U is not in the alphabet"
+        );
+        assert!(normalize_recovery_code("ABCD").is_none());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # Mnemosyne
 
 [![CI](https://github.com/fas0ftware/mnemosyne/actions/workflows/ci.yml/badge.svg)](https://github.com/fas0ftware/mnemosyne/actions/workflows/ci.yml)
-![Version](https://img.shields.io/badge/version-0.3.0-blue)
+![Version](https://img.shields.io/badge/version-0.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Encrypted, deduplicating backups that **test their own restores**. One Rust binary,
@@ -92,6 +92,7 @@ mnemosyne restore latest --target /tmp/r --include ~/projects/app/README.md
 mnemosyne check --read-data          # decrypt and verify everything
 mnemosyne forget --keep-daily 7 --keep-weekly 8 --keep-monthly 12 --prune --dry-run
 mnemosyne passwd                     # change the password (re-wraps the key, data untouched)
+mnemosyne recovery-key               # a code for paper; `passwd --recovery` sets a new password with it
 mnemosyne status                     # last backup and check of every repository
 ```
 
@@ -146,6 +147,20 @@ search, a byte-for-byte download, diff, verification and locking again.
 ![Phone](docs/app-mobile.png)
 
 </details>
+
+## Recovery code
+
+Without the password, nothing in a repository can be read. `mnemosyne recovery-key`
+adds a second way in: a random 160-bit code (`ABCD-EFGH-…`, 32 characters in Crockford
+base32, so O/0 and I/1 mix-ups and lower case are forgiven) shown **once** and never
+stored. Write it on paper and keep it away from the computer. If the password is lost,
+`mnemosyne passwd --recovery` asks for the code and sets a new password.
+
+The code unlocks its own copy of the master key (a second Argon2id-wrapped slot in
+`config.json`), bound to the repository's fixed header and its own settings but not to
+the password slot, so changing the password keeps the code valid. A new code replaces
+the old one; `--remove` deletes it. Versions before 0.4 ignore the slot when reading;
+changing the password with one of them would drop it, so update every machine first.
 
 ## Running it on a timer
 
@@ -237,7 +252,7 @@ cargo test --locked
 
 ![Test results](docs/test-results.svg)
 
-- 31 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
+- 34 unit tests: tampering with any byte of a blob, swapping blobs, wrong keys, the
   decompression cap, KDF limits, header tampering, locks (stale, foreign), dedup and
   content-defined boundaries (10 changed bytes in a 3 MB file → at most 2 new chunks), oversized repository files refused before reading,
   excludes and `CACHEDIR.TAG`, unreadable files, non-UTF-8 names, restore of contents,
@@ -266,7 +281,7 @@ Format version 1. Future versions will read it or say clearly that they cannot.
 ## Roadmap
 
 - Packs: many small chunks in one file (fewer files on slow USB sticks and network shares).
-- A second key slot (recovery key printed on paper next to the password).
+- ~~A second key slot (recovery key printed on paper next to the password).~~ Done in 0.4.
 - ~~`diff` between two snapshots~~ (done in 0.2: compared by chunk ids, nothing decrypted
   but the two file lists); `mount` with FUSE.
 - Optional off-site copy (an rclone remote), still with all encryption on this side.

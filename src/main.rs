@@ -126,8 +126,17 @@ enum Command {
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
-    /// Change the repository password
-    Passwd,
+    /// Change the repository password (--recovery: with the recovery code, if you forgot it)
+    Passwd {
+        #[arg(long)]
+        recovery: bool,
+    },
+    /// Create a recovery code to write on paper: it can set a new password if you forget yours
+    RecoveryKey {
+        /// Remove the recovery code instead
+        #[arg(long)]
+        remove: bool,
+    },
     /// Remove a lock left behind by a crashed run
     Unlock,
     /// Repository size and snapshot count
@@ -598,8 +607,13 @@ fn run(cli: Cli) -> Result<()> {
                 if *dry_run { "would be freed" } else { "freed" }
             );
         }
-        Command::Passwd => {
-            let repo = open(&cli)?;
+        Command::Passwd { recovery } => {
+            let repo = if *recovery {
+                let code = read_password(&None, "Recovery code: ")?;
+                Repo::open_with_recovery(&repo_path(&cli)?, &code)?
+            } else {
+                open(&cli)?
+            };
             let _lock = Lock::acquire(&repo, "passwd")?;
             let a = read_password(&None, "New password: ")?;
             mnemosyne::repo::check_password_strength(&a)?;
@@ -609,6 +623,32 @@ fn run(cli: Cli) -> Result<()> {
             }
             repo.change_password(&a)?;
             println!("Password changed. Update any --password-file used by timers.");
+        }
+        Command::RecoveryKey { remove } => {
+            let repo = open(&cli)?;
+            let _lock = Lock::acquire(&repo, "recovery-key")?;
+            if *remove {
+                let had = repo.remove_recovery()?;
+                println!(
+                    "{}",
+                    if had {
+                        "Recovery code removed."
+                    } else {
+                        "There was no recovery code."
+                    }
+                );
+                return Ok(());
+            }
+            if repo.has_recovery() {
+                eprintln!("This replaces the existing recovery code: the old one stops working.");
+            }
+            let code = repo.create_recovery_code()?;
+            println!(
+                "\nRecovery code for {}:\n\n    {code}\n\n\
+                 Write it on paper and keep it away from this computer. It is shown only now and\n\
+                 is not stored anywhere. With it, `mnemosyne passwd --recovery` sets a new password.\n",
+                repo.root.display()
+            );
         }
         Command::Unlock => {
             let repo = open(&cli)?;
@@ -626,6 +666,10 @@ fn run(cli: Cli) -> Result<()> {
             let names = repo.snapshot_names()?;
             println!("repository  {}", repo.root.display());
             println!("id          {}", repo.id);
+            println!(
+                "recovery    {}",
+                if repo.has_recovery() { "yes" } else { "no" }
+            );
             println!("snapshots   {}", names.len());
             println!("chunks      {}", repo.chunk_ids()?.len());
             println!("size        {}", human_bytes(repo.disk_usage()));
