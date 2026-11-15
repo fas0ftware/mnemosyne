@@ -121,8 +121,35 @@ fn full_cycle() {
     assert_eq!(repo_status["last_check"]["read_data"], "all");
     assert_eq!(repo_status["snapshots"], 2);
 
+    // change one file, back up again, and ask what changed
+    fs::write(
+        src.join("project/src/main.rs"),
+        "fn main() { println!(\"hi\"); }\n",
+    )
+    .unwrap();
+    fs::write(src.join("project/NEW.md"), "new").unwrap();
+    env.ok(&["backup", src.to_str().unwrap(), "--exclude", "node_modules"]);
+    let names: Vec<String> = env
+        .ok(&["snapshots"])
+        .lines()
+        .skip(1)
+        .map(|l| l.split_whitespace().next().unwrap().to_string())
+        .collect();
+    let diff = env.ok(&["diff", &names[1]]);
+    assert!(
+        diff.contains("M ")
+            && diff.contains("main.rs")
+            && diff.contains("+ ")
+            && diff.contains("NEW.md"),
+        "{diff}"
+    );
+    assert!(diff.contains("1 added, 0 removed, 1 modified"), "{diff}");
+    let json: serde_json::Value =
+        serde_json::from_str(&env.ok(&["diff", &names[1], "latest", "--json"])).unwrap();
+    assert_eq!(json["summary"]["added"], 1);
+
     let forget = env.ok(&["forget", "--keep-last", "1", "--prune"]);
-    assert!(forget.contains("1 kept, 1 removed"), "{forget}");
+    assert!(forget.contains("1 kept, 2 removed"), "{forget}");
     assert!(env
         .ok(&["check", "--read-data"])
         .contains("no problems found"));

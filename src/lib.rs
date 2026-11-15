@@ -11,6 +11,7 @@
 
 pub mod backup;
 pub mod crypto;
+pub mod diff;
 pub mod maintain;
 pub mod repo;
 pub mod restore;

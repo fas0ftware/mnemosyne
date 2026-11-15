@@ -70,6 +70,19 @@ enum Command {
         /// Only paths under this one
         path: Option<PathBuf>,
     },
+    /// What changed between two snapshots (by chunk ids; nothing is decrypted but the lists)
+    Diff {
+        /// Older snapshot (name, unique part of it)
+        old: String,
+        /// Newer snapshot (default: latest)
+        #[arg(default_value = "latest")]
+        new: String,
+        /// Also list files whose mode or modification time changed
+        #[arg(long)]
+        metadata: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Restore a snapshot into a directory
     Restore {
         snapshot: String,
@@ -394,6 +407,57 @@ fn run(cli: Cli) -> Result<()> {
                     p.display()
                 );
             }
+        }
+        Command::Diff {
+            old,
+            new,
+            metadata,
+            json,
+        } => {
+            let repo = open(&cli)?;
+            let a = repo.load_snapshot(&repo.resolve(old)?)?;
+            let b = repo.load_snapshot(&repo.resolve(new)?)?;
+            let (changes, s) = mnemosyne::diff::diff(&a, &b, *metadata);
+            if *json {
+                let out = serde_json::json!({"old": a.name, "new": b.name, "summary": s, "changes": changes});
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&out).map_err(|e| Error::Usage(e.to_string()))?
+                );
+                return Ok(());
+            }
+            for c in &changes {
+                let size = match c.kind {
+                    mnemosyne::diff::Kind::Modified => {
+                        format!("{} -> {}", human_bytes(c.old_size), human_bytes(c.new_size))
+                    }
+                    mnemosyne::diff::Kind::Removed => human_bytes(c.old_size),
+                    _ => human_bytes(c.new_size),
+                };
+                let suffix = if c.entry == "file" {
+                    format!("  ({size})")
+                } else {
+                    format!("  [{}]", c.entry)
+                };
+                println!("{} {}{}", c.kind.symbol(), c.path, suffix);
+            }
+            let sign = if s.bytes_delta < 0 { "-" } else { "+" };
+            println!(
+                "{} -> {}: {} added, {} removed, {} modified, {} replaced{}, {}{}",
+                a.name,
+                b.name,
+                s.added,
+                s.removed,
+                s.modified,
+                s.replaced,
+                if *metadata {
+                    format!(", {} metadata only", s.metadata)
+                } else {
+                    String::new()
+                },
+                sign,
+                human_bytes(s.bytes_delta.unsigned_abs())
+            );
         }
         Command::Restore {
             snapshot,
